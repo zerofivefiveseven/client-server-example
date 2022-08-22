@@ -1,6 +1,3 @@
-// Server side C/C++ program to demonstrate Socket
-// programming
-#include <netinet/in.h>
 #include <stdio.h>
 #include <string>
 #include <stdlib.h>
@@ -60,23 +57,6 @@ int main(void) {
     n = 0;
 
     std::cout << str;
-//    do {
-//      n = recv(s2, str, 128, 0);
-//      if (n > 2 && atoi(str) % 32 == 0){
-//        printf("Data received.\n");
-//      }
-//      else
-//      {
-//        printf("Data error.\n");
-//        if (n < 0) { perror("recv"); }
-//      }
-//      if (n <= 0) {
-//
-//        done = 1;
-//      }
-//
-//    } while (!done);
-
     close(s2);
   }
 
