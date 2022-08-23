@@ -56,7 +56,7 @@ int main(void) {
     }
     n = 0;
 
-    std::cout << str;
+    std::cout << str<<std::endl;
     close(s2);
   }
 

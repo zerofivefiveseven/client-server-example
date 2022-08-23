@@ -2,7 +2,6 @@
 #include <thread>
 #include <algorithm>
 #include <cassert>
-#include <cstddef>
 #include <string>
 #include <mutex>
 #include <condition_variable>
@@ -10,12 +9,57 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <sys/types.h>
-#include <sys/ioctl.h>
+#include <variant>
 #define SOCK_PATH
+
+class ClientSocket {
+  explicit ClientSocket(int fd) : fd(fd) {}
+ public:
+
+  enum ErrorCode {
+    SOCKET_CREATE_ERROR,
+    SOCKET_CONNECT_ERROR
+  };
+
+  static std::variant<ClientSocket, ErrorCode> createClientSocket() {
+    int fd;
+    size_t len;
+    sockaddr_un remote{};
+
+    if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+      return SOCKET_CREATE_ERROR;
+    }
+
+    remote.sun_family = AF_UNIX;
+    strcpy(remote.sun_path, "echo_socket");
+    len = strlen(remote.sun_path) + sizeof(remote.sun_family);
+    if (connect(fd, (struct sockaddr *) &remote, len) == -1) {
+      return SOCKET_CONNECT_ERROR;
+    }
+
+    return ClientSocket(fd);
+  }
+
+  template<class T>
+  void send(T sum) const {
+    char str[128];
+    std::fill(str, str + 128, 0);
+    auto string_sum = std::to_string(sum);
+    std::copy(string_sum.begin(), string_sum.end(), str);
+    if (::send(fd, str, 128, 0) == -1) {
+      perror("send");
+    }
+  }
+
+  void close() const {
+    ::close(fd);
+  }
+
+ private:
+  int fd;
+};
 
 std::size_t replace_all(std::string &inout, std::string_view what, std::string_view with) {
   std::size_t count{};
@@ -27,42 +71,36 @@ std::size_t replace_all(std::string &inout, std::string_view what, std::string_v
   return count;
 }
 
-std::mutex mutexIntance;
-std::condition_variable cv;
-std::string data;
-bool ready = false;
-bool processed = false;
-
-char BUFFER[128];
-
 int main() {
+  std::mutex mutex;hgfhgfjjjjghfjfghj
+  std::condition_variable cv;
+  std::string data;
+  bool ready = false;
+  bool processed = false;
+
+  char BUFFER[128];
 
   std::thread thread(
-      []() {
-        int s, t, len;
-        sockaddr_un remote;
-        char str[128];
-
-        if ((s = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-          perror("socket");
-          exit(1);
-        }
-
-        printf("Trying to connect...\n");
-
-        remote.sun_family = AF_UNIX;
-        strcpy(remote.sun_path, "echo_socket");
-        len = strlen(remote.sun_path) + sizeof(remote.sun_family);
-        if (connect(s, (struct sockaddr *) &remote, len) == -1) {
-          perror("connect");
-          exit(1);
-        }
-
-        printf("Connected.\n");
-
+      [&]() {
         while (true) {
-          std::unique_lock lk(mutexIntance);
-          cv.wait(lk, [] { return ready; });
+          std::cerr << "Trying to connect...\n";
+          auto maybeSocket = ClientSocket::createClientSocket();
+
+          if (std::holds_alternative<ClientSocket::ErrorCode>(maybeSocket)) {
+            auto error_code = std::get<ClientSocket::ErrorCode>(maybeSocket);
+            if (error_code == ClientSocket::SOCKET_CONNECT_ERROR) {
+              sleep(2);
+              continue;
+            } else {
+              perror("Create socket");
+              throw std::runtime_error("Cannot create socket");
+            }
+          }
+          auto socket = std::get<ClientSocket>(maybeSocket);
+          std::cerr << "Connected.\n";
+
+          std::unique_lock lk(mutex);
+          cv.wait(lk, [&] { return ready; });
 
           std::string data = BUFFER;
           std::fill(BUFFER, BUFFER + 128, 0);
@@ -74,19 +112,14 @@ int main() {
             return acc + c - '0';
           });
           std::cout << sum << '\n';
-          auto string_sum = std::to_string(sum);
-          std::copy(string_sum.begin(), string_sum.end(), str);
 
-          if (send(s, str, 128, 0) == -1) {
-            perror("send");
-            exit(1);
-          }
-          std::fill(str, str + 128, 0);
+          socket.send(sum);
 
           processed = true;
           ready = false;
           lk.unlock();
           cv.notify_one();
+          socket.close();
         }
       }
   );
@@ -108,16 +141,15 @@ int main() {
     std::copy(input.begin(), input.end(), BUFFER);
 
     {
-      std::lock_guard lk(mutexIntance);
+      std::lock_guard lk(mutex);
       ready = true;
     }
     cv.notify_one();
     {
-      std::unique_lock lk(mutexIntance);
-      cv.wait(lk, [] { return processed; });
+      std::unique_lock lk(mutex);
+      cv.wait(lk, [&] { return processed; });
       processed = false;
     }
-
   }
   return 0;
 }
